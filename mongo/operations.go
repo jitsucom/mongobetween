@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
 	"go.mongodb.org/mongo-driver/x/mongo/driver"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/wiremessage"
@@ -33,6 +34,7 @@ type Operation interface {
 	Unacknowledged() bool
 	CommandAndCollection() (Command, string)
 	TransactionDetails() *TransactionDetails
+	ReadPref() (rp *readpref.ReadPref, ok bool)
 }
 
 // see https://github.com/mongodb/mongo-go-driver/blob/v1.7.2/x/mongo/driver/operation.go#L1361-L1426
@@ -119,6 +121,10 @@ func (o *opUnknown) CommandAndCollection() (Command, string) {
 
 func (o *opUnknown) String() string {
 	return fmt.Sprintf("{ OpUnknown opCode: %d, wm: %s }", o.opCode, o.wm)
+}
+
+func (o *opUnknown) ReadPref() (rp *readpref.ReadPref, ok bool) {
+	return readpref.Primary(), false
 }
 
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#wire-op-query
@@ -228,6 +234,10 @@ func (q *opQuery) CommandAndCollection() (Command, string) {
 
 func (q *opQuery) String() string {
 	return fmt.Sprintf("{ OpQuery flags: %s, fullCollectionName: %s, numberToSkip: %d, numberToReturn: %d, query: %s, returnFieldsSelector: %s }", q.flags.String(), q.fullCollectionName, q.numberToSkip, q.numberToReturn, q.query.String(), q.returnFieldsSelector.String())
+}
+
+func (q *opQuery) ReadPref() (rp *readpref.ReadPref, ok bool) {
+	return extractReadPref(q.query)
 }
 
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op-msg
@@ -485,6 +495,17 @@ func (m *opMsg) String() string {
 	return fmt.Sprintf("{ OpMsg flags: %d, sections: [%s], checksum: %d }", m.flags, strings.Join(sections, ", "), m.checksum)
 }
 
+func (m *opMsg) ReadPref() (rp *readpref.ReadPref, ok bool) {
+	if len(m.sections) == 0 {
+		return readpref.Primary(), false
+	}
+	single, ok := m.sections[0].(*opMsgSectionSingle)
+	if !ok {
+		return readpref.Primary(), false
+	}
+	return extractReadPref(single.msg)
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op-reply
 type opReply struct {
 	reqID        int32
@@ -588,6 +609,11 @@ func (r *opReply) String() string {
 	return fmt.Sprintf("{ OpReply flags: %d, cursorID: %d, startingFrom: %d, numReturned: %d, documents: [%s] }", r.flags, r.cursorID, r.startingFrom, r.numReturned, strings.Join(documents, ", "))
 }
 
+func (r *opReply) ReadPref() (rp *readpref.ReadPref, ok bool) {
+	// Replies don't contain read preferences
+	return readpref.Primary(), false
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op-get-more
 type opGetMore struct {
 	reqID              int32
@@ -676,6 +702,11 @@ func (g *opGetMore) String() string {
 	return fmt.Sprintf("{ OpGetMore fullCollectionName: %s, numberToReturn: %d, cursorID: %d }", g.fullCollectionName, g.numberToReturn, g.cursorID)
 }
 
+func (g *opGetMore) ReadPref() (rp *readpref.ReadPref, ok bool) {
+	// GetMore operations don't specify read preference, they inherit from cursor
+	return readpref.Primary(), false
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op_update
 type opUpdate struct {
 	reqID              int32
@@ -759,6 +790,11 @@ func (u *opUpdate) CommandAndCollection() (Command, string) {
 
 func (u *opUpdate) String() string {
 	return fmt.Sprintf("{ OpQuery fullCollectionName: %s, flags: %d, selector: %s, update: %s }", u.fullCollectionName, u.flags, u.selector.String(), u.update.String())
+}
+
+func (u *opUpdate) ReadPref() (rp *readpref.ReadPref, ok bool) {
+	// Update is a write operation, always goes to primary
+	return readpref.Primary(), false
 }
 
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op_insert
@@ -845,6 +881,11 @@ func (i *opInsert) String() string {
 	return fmt.Sprintf("{ OpInsert flags: %d, fullCollectionName: %s, documents: %s }", i.flags, i.fullCollectionName, strings.Join(documents, ", "))
 }
 
+func (i *opInsert) ReadPref() (rp *readpref.ReadPref, ok bool) {
+	// Insert is a write operation, always goes to primary
+	return readpref.Primary(), false
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op_insert
 type opDelete struct {
 	reqID              int32
@@ -928,6 +969,11 @@ func (d *opDelete) String() string {
 	return fmt.Sprintf("{ OpDelete fullCollectionName: %s, flags: %d, selector: %s }", d.fullCollectionName, d.flags, d.selector.String())
 }
 
+func (d *opDelete) ReadPref() (rp *readpref.ReadPref, ok bool) {
+	// Delete is a write operation, always goes to primary
+	return readpref.Primary(), false
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op_kill_cursors
 type opKillCursors struct {
 	reqID     int32
@@ -1006,6 +1052,11 @@ func (k *opKillCursors) String() string {
 	return fmt.Sprintf("{ OpKillCursors cursorIDs: %v }", k.cursorIDs)
 }
 
+func (k *opKillCursors) ReadPref() (rp *readpref.ReadPref, ok bool) {
+	// KillCursors doesn't use read preferences
+	return readpref.Primary(), false
+}
+
 func appendi32(dst []byte, i32 int32) []byte {
 	return append(dst, byte(i32), byte(i32>>8), byte(i32>>16), byte(i32>>24))
 }
@@ -1029,4 +1080,50 @@ func readCString(src []byte) (string, []byte, bool) {
 		return "", src, false
 	}
 	return string(src[:idx]), src[idx+1:], true
+}
+
+// extractReadPref extracts the read preference from a BSON document
+// MongoDB clients send read preferences in the $readPreference field
+// See: https://github.com/mongodb/specifications/blob/master/source/server-selection/server-selection.rst#passing-read-preference-to-mongos
+func extractReadPref(doc bsoncore.Document) (*readpref.ReadPref, bool) {
+	// Check for $readPreference field
+	rpVal := doc.Lookup("$readPreference")
+	if rpVal.Type == 0 {
+		// No read preference specified, default to primary
+		return readpref.Primary(), false
+	}
+
+	rpDoc, ok := rpVal.DocumentOK()
+	if !ok {
+		return readpref.Primary(), false
+	}
+
+	// Extract mode
+	modeVal := rpDoc.Lookup("mode")
+	mode, ok := modeVal.StringValueOK()
+	if !ok {
+		return readpref.Primary(), false
+	}
+
+	// Parse the mode string and create appropriate read preference
+	var rp *readpref.ReadPref
+	switch mode {
+	case "primary":
+		rp = readpref.Primary()
+	case "primaryPreferred":
+		rp = readpref.PrimaryPreferred()
+	case "secondary":
+		rp = readpref.Secondary()
+	case "secondaryPreferred":
+		rp = readpref.SecondaryPreferred()
+	case "nearest":
+		rp = readpref.Nearest()
+	default:
+		return readpref.Primary(), false
+	}
+
+	// TODO: Support tag sets and maxStalenessSeconds if needed
+	// For now, we just use the mode without additional options
+
+	return rp, true
 }
