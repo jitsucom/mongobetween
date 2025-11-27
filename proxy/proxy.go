@@ -30,12 +30,14 @@ type Proxy struct {
 
 	mongoLookup MongoLookup
 	dynamic     *Dynamic
+	filter      *Filter
+	auth        *AuthConfig
 
 	quit chan interface{}
 	kill chan interface{}
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string, unlink bool, mongoLookup MongoLookup, dynamic *Dynamic) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string, unlink bool, mongoLookup MongoLookup, dynamic *Dynamic, filter *Filter, auth *AuthConfig) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -44,6 +46,9 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string
 		if err != nil {
 			return nil, err
 		}
+	}
+	if auth != nil && auth.Enabled {
+		log.Info("Proxy authentication enabled", zap.Int("users", len(auth.Users)))
 	}
 	return &Proxy{
 		log:    log,
@@ -55,6 +60,8 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string
 
 		mongoLookup: mongoLookup,
 		dynamic:     dynamic,
+		filter:      filter,
+		auth:        auth,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
@@ -162,7 +169,7 @@ func (p *Proxy) accept(l net.Listener) {
 		opened("connection_opened", []string{})
 		go func() {
 			log.Info("Accept")
-			handleConnection(log, p.statsd, p.address, c, p.mongoLookup, p.dynamic, p.kill)
+			handleConnection(log, p.statsd, p.address, c, p.mongoLookup, p.dynamic, p.filter, p.auth, p.kill)
 
 			_ = c.Close()
 			log.Info("Close")

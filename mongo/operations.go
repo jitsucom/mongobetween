@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,6 +33,7 @@ type Operation interface {
 	Error() error
 	Unacknowledged() bool
 	CommandAndCollection() (Command, string)
+	CommandsAndCollections() []CommandCollection
 	TransactionDetails() *TransactionDetails
 }
 
@@ -115,6 +117,10 @@ func (o *opUnknown) Unacknowledged() bool {
 
 func (o *opUnknown) CommandAndCollection() (Command, string) {
 	return Unknown, ""
+}
+
+func (o *opUnknown) CommandsAndCollections() []CommandCollection {
+	return nil
 }
 
 func (o *opUnknown) String() string {
@@ -226,6 +232,15 @@ func (q *opQuery) CommandAndCollection() (Command, string) {
 	return Find, q.fullCollectionName
 }
 
+func (q *opQuery) CommandsAndCollections() []CommandCollection {
+	db, coll := splitDBCollection(q.fullCollectionName)
+	return []CommandCollection{{
+		Command:    Find,
+		Database:   db,
+		Collection: coll,
+	}}
+}
+
 func (q *opQuery) String() string {
 	return fmt.Sprintf("{ OpQuery flags: %s, fullCollectionName: %s, numberToSkip: %d, numberToReturn: %d, query: %s, returnFieldsSelector: %s }", q.flags.String(), q.fullCollectionName, q.numberToSkip, q.numberToReturn, q.query.String(), q.returnFieldsSelector.String())
 }
@@ -244,6 +259,7 @@ type opMsgSection interface {
 	isIsMaster() bool
 	append(buffer []byte) []byte
 	commandAndCollection() (Command, string)
+	commandsAndCollections() []CommandCollection
 }
 
 type opMsgSectionSingle struct {
@@ -271,6 +287,10 @@ func (o *opMsgSectionSingle) append(buffer []byte) []byte {
 
 func (o *opMsgSectionSingle) commandAndCollection() (Command, string) {
 	return CommandAndCollection(o.msg)
+}
+
+func (o *opMsgSectionSingle) commandsAndCollections() []CommandCollection {
+	return CommandsAndCollections(o.msg)
 }
 
 func (o *opMsgSectionSingle) String() string {
@@ -310,6 +330,10 @@ func (o *opMsgSectionSequence) append(buffer []byte) []byte {
 
 func (o *opMsgSectionSequence) commandAndCollection() (Command, string) {
 	return Unknown, ""
+}
+
+func (o *opMsgSectionSequence) commandsAndCollections() []CommandCollection {
+	return nil
 }
 
 func (o *opMsgSectionSequence) String() string {
@@ -423,7 +447,7 @@ func (m *opMsg) Error() error {
 	if !ok {
 		return nil
 	}
-	return driver.ExtractErrorFromServerResponse(single.msg)
+	return driver.ExtractErrorFromServerResponse(context.Background(), single.msg)
 }
 
 func (m *opMsg) Unacknowledged() bool {
@@ -438,6 +462,16 @@ func (m *opMsg) CommandAndCollection() (Command, string) {
 		}
 	}
 	return Unknown, ""
+}
+
+func (m *opMsg) CommandsAndCollections() []CommandCollection {
+	cc := []CommandCollection{}
+	for _, section := range m.sections {
+		if cmds := section.commandsAndCollections(); len(cmds) > 0 {
+			cc = append(cc, cmds...)
+		}
+	}
+	return cc
 }
 
 // TransactionDetails See https://github.com/mongodb/specifications/blob/master/source/transactions/transactions.rst
@@ -569,7 +603,7 @@ func (r *opReply) Error() error {
 	if len(r.documents) == 0 {
 		return nil
 	}
-	return driver.ExtractErrorFromServerResponse(r.documents[0])
+	return driver.ExtractErrorFromServerResponse(context.Background(), r.documents[0])
 }
 
 func (r *opReply) Unacknowledged() bool {
@@ -578,6 +612,10 @@ func (r *opReply) Unacknowledged() bool {
 
 func (r *opReply) CommandAndCollection() (Command, string) {
 	return Find, ""
+}
+
+func (r *opReply) CommandsAndCollections() []CommandCollection {
+	return []CommandCollection{{Command: Find}}
 }
 
 func (r *opReply) String() string {
@@ -672,6 +710,15 @@ func (g *opGetMore) CommandAndCollection() (Command, string) {
 	return GetMore, g.fullCollectionName
 }
 
+func (g *opGetMore) CommandsAndCollections() []CommandCollection {
+	db, coll := splitDBCollection(g.fullCollectionName)
+	return []CommandCollection{{
+		Command:    GetMore,
+		Database:   db,
+		Collection: coll,
+	}}
+}
+
 func (g *opGetMore) String() string {
 	return fmt.Sprintf("{ OpGetMore fullCollectionName: %s, numberToReturn: %d, cursorID: %d }", g.fullCollectionName, g.numberToReturn, g.cursorID)
 }
@@ -757,6 +804,15 @@ func (u *opUpdate) CommandAndCollection() (Command, string) {
 	return Update, u.fullCollectionName
 }
 
+func (u *opUpdate) CommandsAndCollections() []CommandCollection {
+	db, coll := splitDBCollection(u.fullCollectionName)
+	return []CommandCollection{{
+		Command:    Update,
+		Database:   db,
+		Collection: coll,
+	}}
+}
+
 func (u *opUpdate) String() string {
 	return fmt.Sprintf("{ OpQuery fullCollectionName: %s, flags: %d, selector: %s, update: %s }", u.fullCollectionName, u.flags, u.selector.String(), u.update.String())
 }
@@ -835,6 +891,15 @@ func (i *opInsert) Unacknowledged() bool {
 
 func (i *opInsert) CommandAndCollection() (Command, string) {
 	return Insert, i.fullCollectionName
+}
+
+func (i *opInsert) CommandsAndCollections() []CommandCollection {
+	db, coll := splitDBCollection(i.fullCollectionName)
+	return []CommandCollection{{
+		Command:    Insert,
+		Database:   db,
+		Collection: coll,
+	}}
 }
 
 func (i *opInsert) String() string {
@@ -924,6 +989,15 @@ func (d *opDelete) CommandAndCollection() (Command, string) {
 	return Delete, d.fullCollectionName
 }
 
+func (d *opDelete) CommandsAndCollections() []CommandCollection {
+	db, coll := splitDBCollection(d.fullCollectionName)
+	return []CommandCollection{{
+		Command:    Delete,
+		Database:   db,
+		Collection: coll,
+	}}
+}
+
 func (d *opDelete) String() string {
 	return fmt.Sprintf("{ OpDelete fullCollectionName: %s, flags: %d, selector: %s }", d.fullCollectionName, d.flags, d.selector.String())
 }
@@ -1002,6 +1076,10 @@ func (k *opKillCursors) CommandAndCollection() (Command, string) {
 	return Unknown, ""
 }
 
+func (k *opKillCursors) CommandsAndCollections() []CommandCollection {
+	return nil
+}
+
 func (k *opKillCursors) String() string {
 	return fmt.Sprintf("{ OpKillCursors cursorIDs: %v }", k.cursorIDs)
 }
@@ -1029,4 +1107,49 @@ func readCString(src []byte) (string, []byte, bool) {
 		return "", src, false
 	}
 	return string(src[:idx]), src[idx+1:], true
+}
+
+// splitDBCollection splits "database.collection" into database and collection parts.
+func splitDBCollection(fullName string) (database, collection string) {
+	idx := strings.Index(fullName, ".")
+	if idx == -1 {
+		return fullName, ""
+	}
+	return fullName[:idx], fullName[idx+1:]
+}
+
+// OpMsg is an exported alias for opMsg to allow type assertions in other packages.
+type OpMsg = opMsg
+
+// Document extracts the BSON document from the first section of the OpMsg.
+// Returns the document and true if found, nil and false otherwise.
+func (m *opMsg) Document() (bsoncore.Document, bool) {
+	for _, section := range m.sections {
+		if single, ok := section.(*opMsgSectionSingle); ok {
+			return single.msg, true
+		}
+	}
+	return nil, false
+}
+
+// BuildOpMsgResponse creates an OP_MSG response message with the given document.
+func BuildOpMsgResponse(responseTo int32, doc bsoncore.Document) (*Message, error) {
+	msg := &opMsg{
+		reqID: 0,
+		flags: 0,
+		sections: []opMsgSection{
+			&opMsgSectionSingle{msg: doc},
+		},
+	}
+
+	wm := msg.Encode(responseTo)
+	op, err := Decode(wm)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Message{
+		Wm: wm,
+		Op: op,
+	}, nil
 }

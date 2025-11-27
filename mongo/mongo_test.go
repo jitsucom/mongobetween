@@ -84,7 +84,7 @@ func TestRoundTripProcessError(t *testing.T) {
 	dynamic, err := proxy.NewDynamic("", zap.L())
 	assert.Nil(t, err)
 
-	p, err := proxy.NewProxy(zap.L(), sd, "label", "tcp4", ":27023", false, lookup, dynamic)
+	p, err := proxy.NewProxy(zap.L(), sd, "label", "tcp4", ":27023", false, lookup, dynamic, nil, nil)
 	assert.Nil(t, err)
 
 	go func() {

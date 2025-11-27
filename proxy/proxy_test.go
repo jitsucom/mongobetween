@@ -275,7 +275,7 @@ func setupProxies(t *testing.T, d *Dynamic, startPort int, count int) []*Proxy {
 		assert.Nil(t, err)
 		upstreams[address] = upstream
 
-		proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", address, false, lookup, d)
+		proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", address, false, lookup, d, nil, nil)
 		assert.Nil(t, err)
 
 		proxies = append(proxies, proxy)

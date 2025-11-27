@@ -39,6 +39,8 @@ type Config struct {
 	statsdaddr string
 	logger     *zap.Logger
 	statsd     *statsd.Client
+	filter     *proxy.Filter
+	auth       *proxy.AuthConfig
 }
 
 type client struct {
@@ -92,7 +94,7 @@ func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 	}
 
 	for _, client := range c.clients {
-		p, err := proxy.NewProxy(log, c.statsd, client.label, c.network, client.address, c.unlink, mongoLookup, d)
+		p, err := proxy.NewProxy(log, c.statsd, client.label, c.network, client.address, c.unlink, mongoLookup, d, c.filter, c.auth)
 		if err != nil {
 			return nil, err
 		}
@@ -118,6 +120,8 @@ func parseFlags() (*Config, error) {
 
 	var unlink, ping, pretty, enableSdamMetrics, enableSdamLogging bool
 	var network, username, password, stats, loglevel, dynamic string
+	var allowedOps, deniedOps, allowedDbs, deniedDbs, allowedColls, deniedColls string
+	var proxyAuthUsers string
 	flag.StringVar(&network, "network", "tcp4", "One of: tcp, tcp4, tcp6, unix or unixpacket")
 	flag.StringVar(&username, "username", "", "MongoDB username")
 	flag.StringVar(&password, "password", "", "MongoDB password")
@@ -129,6 +133,13 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&dynamic, "dynamic", "", "File or URL to query for dynamic configuration")
 	flag.BoolVar(&enableSdamMetrics, "enable-sdam-metrics", false, "Enable SDAM(Server Discovery And Monitoring) metrics")
 	flag.BoolVar(&enableSdamLogging, "enable-sdam-logging", false, "Enable SDAM(Server Discovery And Monitoring) logging")
+	flag.StringVar(&allowedOps, "allowed-operations", "", "Comma-separated list of allowed MongoDB operations (e.g., find,insert,update)")
+	flag.StringVar(&deniedOps, "denied-operations", "", "Comma-separated list of denied MongoDB operations (e.g., drop,dropDatabase)")
+	flag.StringVar(&allowedDbs, "allowed-databases", "", "Comma-separated list of allowed databases (e.g., app_db,logs)")
+	flag.StringVar(&deniedDbs, "denied-databases", "", "Comma-separated list of denied databases (e.g., admin,config)")
+	flag.StringVar(&allowedColls, "allowed-collections", "", "Comma-separated list of allowed collections in db.collection format (e.g., app_db.users,app_db.orders)")
+	flag.StringVar(&deniedColls, "denied-collections", "", "Comma-separated list of denied collections in db.collection format (e.g., app_db.sensitive)")
+	flag.StringVar(&proxyAuthUsers, "proxy-auth", "", "Proxy authentication users in format user1:pass1,user2:pass2 (enables SCRAM-SHA-256 auth)")
 
 	flag.Parse()
 
@@ -138,6 +149,13 @@ func parseFlags() (*Config, error) {
 	stats = expandEnv(stats)
 	loglevel = expandEnv(loglevel)
 	dynamic = expandEnv(dynamic)
+	allowedOps = expandEnv(allowedOps)
+	deniedOps = expandEnv(deniedOps)
+	allowedDbs = expandEnv(allowedDbs)
+	deniedDbs = expandEnv(deniedDbs)
+	allowedColls = expandEnv(allowedColls)
+	deniedColls = expandEnv(deniedColls)
+	proxyAuthUsers = expandEnv(proxyAuthUsers)
 
 	level := zap.InfoLevel
 	if loglevel != "" {
@@ -193,6 +211,20 @@ func parseFlags() (*Config, error) {
 		})
 	}
 
+	filter := proxy.NewFilter(
+		parseCommaSeparated(allowedOps),
+		parseCommaSeparated(deniedOps),
+		parseCommaSeparated(allowedDbs),
+		parseCommaSeparated(deniedDbs),
+		parseCommaSeparated(allowedColls),
+		parseCommaSeparated(deniedColls),
+	)
+
+	auth, err := parseProxyAuth(proxyAuthUsers)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		network:    network,
 		unlink:     unlink,
@@ -204,7 +236,53 @@ func parseFlags() (*Config, error) {
 		dynamic:    dynamic,
 		logger:     loggerClient,
 		statsd:     statsdClient,
+		filter:     filter,
+		auth:       auth,
 	}, nil
+}
+
+func parseProxyAuth(users string) (*proxy.AuthConfig, error) {
+	auth := proxy.NewAuthConfig()
+	if users == "" {
+		return auth, nil
+	}
+
+	pairs := strings.Split(users, ",")
+	for _, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid proxy-auth format: %s (expected user:pass)", pair)
+		}
+		username := strings.TrimSpace(parts[0])
+		password := strings.TrimSpace(parts[1])
+		if username == "" || password == "" {
+			return nil, fmt.Errorf("invalid proxy-auth: username and password cannot be empty")
+		}
+		if err := auth.AddUser(username, password); err != nil {
+			return nil, fmt.Errorf("failed to add proxy user %s: %w", username, err)
+		}
+	}
+
+	return auth, nil
+}
+
+func parseCommaSeparated(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 func expandEnv(config string) string {
