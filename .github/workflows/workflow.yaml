@@ -22,13 +22,6 @@ jobs:
     container:
       # gh actions needs node, so use the node image
       image: node
-    services:
-      mongo1:
-        image: mongo:5
-      mongo2:
-        image: mongo:5
-      mongo3:
-        image: mongo:5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

@@ -36,6 +36,20 @@ Usage: mongobetween [OPTIONS] address1=uri1 [address2=uri2] ...
         Enable SDAM(Server Discovery And Monitoring) metrics
   -enable-sdam-logging
         Enable SDAM(Server Discovery And Monitoring) logging
+  -allowed-operations string
+    	Comma-separated list of allowed MongoDB operations (e.g., find,insert,update)
+  -denied-operations string
+    	Comma-separated list of denied MongoDB operations (e.g., drop,dropDatabase)
+  -allowed-databases string
+    	Comma-separated list of allowed database names
+  -denied-databases string
+    	Comma-separated list of denied database names
+  -allowed-collections string
+    	Comma-separated list of allowed collections (format: db.collection, supports wildcard prefix: db.prefix*)
+  -denied-collections string
+    	Comma-separated list of denied collections (format: db.collection, supports wildcard prefix: db.prefix*)
+  -proxy-auth string
+    	Comma-separated list of proxy authentication credentials (format: user:pass,user2:pass2)
 ```
 
 TCP socket example:
@@ -76,6 +90,133 @@ Passing a file or URL as the `-dynamic` argument will allow somewhat dynamic con
 ```
 
 This will disable writes to the proxy served from address `:12345`, and redirect any traffic sent to `/var/tmp/cluster1.sock` to the proxy running on `/var/tmp/cluster2.sock`. This is useful for minimal-downtime migrations between clusters.
+
+### Operation and Collection Filtering
+
+`mongobetween` supports filtering MongoDB operations at the proxy level. This allows you to restrict which operations, databases, and collections can be accessed through the proxy.
+
+#### Filtering Operations
+
+You can allow or deny specific MongoDB operations:
+
+```bash
+# Only allow read operations
+mongobetween -allowed-operations "find,aggregate,count" \
+  ":27016=mongodb://localhost:27017/database"
+
+# Block destructive operations
+mongobetween -denied-operations "drop,dropDatabase,delete" \
+  ":27016=mongodb://localhost:27017/database"
+```
+
+Supported operations include: `find`, `insert`, `update`, `delete`, `aggregate`, `count`, `distinct`, `findAndModify`, `mapReduce`, `createIndexes`, `dropIndexes`, `drop`, `dropDatabase`, `listCollections`, `listIndexes`, `listDatabases`, `getMore`, and more.
+
+#### Filtering Databases
+
+Restrict access to specific databases:
+
+```bash
+# Only allow access to specific databases
+mongobetween -allowed-databases "app_db,analytics" \
+  ":27016=mongodb://localhost:27017/database"
+
+# Block access to admin databases
+mongobetween -denied-databases "admin,config,local" \
+  ":27016=mongodb://localhost:27017/database"
+```
+
+#### Filtering Collections
+
+Restrict access to specific collections. Collections are specified in `database.collection` format:
+
+```bash
+# Only allow access to specific collections
+mongobetween -allowed-collections "app_db.users,app_db.orders" \
+  ":27016=mongodb://localhost:27017/database"
+
+# Block access to sensitive collections
+mongobetween -denied-collections "app_db.credentials,app_db.secrets" \
+  ":27016=mongodb://localhost:27017/database"
+```
+
+#### Wildcard Collection Patterns
+
+Collection filters support wildcard prefix matching using `*` at the end:
+
+```bash
+# Allow all collections starting with "public_"
+mongobetween -allowed-collections "app_db.public_*" \
+  ":27016=mongodb://localhost:27017/database"
+
+# Block all temporary collections
+mongobetween -denied-collections "app_db.temp_*,app_db.cache_*" \
+  ":27016=mongodb://localhost:27017/database"
+
+# Allow all collections in a database
+mongobetween -allowed-collections "app_db.*" \
+  ":27016=mongodb://localhost:27017/database"
+```
+
+#### Combining Filters
+
+Multiple filter types can be combined:
+
+```bash
+# Read-only access to specific collections
+mongobetween \
+  -allowed-operations "find,aggregate,count" \
+  -allowed-databases "app_db" \
+  -denied-collections "app_db.internal_*" \
+  ":27016=mongodb://localhost:27017/database"
+```
+
+When an operation is filtered, the proxy returns a proper MongoDB error response with code `13` (Unauthorized), allowing clients to handle the error gracefully.
+
+### Proxy Authentication
+
+`mongobetween` can require clients to authenticate to the proxy itself before accessing the upstream MongoDB cluster. This is separate from MongoDB's native authentication and provides an additional layer of access control.
+
+#### Configuring Proxy Authentication
+
+Enable proxy authentication by providing user credentials:
+
+```bash
+# Single user
+mongobetween -proxy-auth "appuser:secretpassword" \
+  ":27016=mongodb://localhost:27017/database"
+
+# Multiple users
+mongobetween -proxy-auth "user1:pass1,user2:pass2,readonly:readonlypass" \
+  ":27016=mongodb://localhost:27017/database"
+```
+
+#### Connecting with Authentication
+
+Clients must authenticate using SCRAM-SHA-256. Most MongoDB drivers support this automatically when credentials are provided in the connection URI:
+
+```
+mongodb://appuser:secretpassword@localhost:27016/database
+```
+
+Or with explicit mechanism specification:
+
+```
+mongodb://appuser:secretpassword@localhost:27016/database?authMechanism=SCRAM-SHA-256
+```
+
+#### How It Works
+
+1. When proxy authentication is enabled, the proxy intercepts `saslStart` and `saslContinue` commands
+2. The proxy performs SCRAM-SHA-256 authentication using the configured credentials
+3. Once authenticated, the connection is marked as authenticated and subsequent commands are proxied to MongoDB
+4. Unauthenticated connections can only send `isMaster`/`hello` commands; all other commands are rejected
+
+#### Security Notes
+
+- Passwords are never stored in plaintext; they are stored as salted PBKDF2-derived keys
+- Each user has a unique salt generated with cryptographically secure random bytes
+- The SCRAM-SHA-256 protocol ensures passwords are never sent over the wire in plaintext
+- Proxy authentication is independent of MongoDB authentication - you may use both for defense in depth
 
 ### TODO
 
