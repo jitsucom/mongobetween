@@ -46,6 +46,8 @@ Usage: mongobetween [OPTIONS] address1=uri1 [address2=uri2] ...
     	Comma-separated list of denied database names
   -allowed-collections string
     	Comma-separated list of allowed collections (format: db.collection, supports wildcard prefix: db.prefix*)
+  -allowed-collections-file string
+    	Path to file containing allowed collections, one per line in db.collection format
   -denied-collections string
     	Comma-separated list of denied collections (format: db.collection, supports wildcard prefix: db.prefix*)
   -proxy-auth string
@@ -90,6 +92,66 @@ Passing a file or URL as the `-dynamic` argument will allow somewhat dynamic con
 ```
 
 This will disable writes to the proxy served from address `:12345`, and redirect any traffic sent to `/var/tmp/cluster1.sock` to the proxy running on `/var/tmp/cluster2.sock`. This is useful for minimal-downtime migrations between clusters.
+
+### Environment Variables
+
+All command-line options can be configured using environment variables. There are two ways to use environment variables:
+
+#### Method 1: MONGOBETWEEN_ prefix
+
+Set environment variables with the `MONGOBETWEEN_` prefix. Flag names are converted to uppercase with hyphens replaced by underscores:
+
+| Flag | Environment Variable |
+|------|---------------------|
+| `-network` | `MONGOBETWEEN_NETWORK` |
+| `-username` | `MONGOBETWEEN_USERNAME` |
+| `-password` | `MONGOBETWEEN_PASSWORD` |
+| `-statsd` | `MONGOBETWEEN_STATSD` |
+| `-loglevel` | `MONGOBETWEEN_LOGLEVEL` |
+| `-unlink` | `MONGOBETWEEN_UNLINK` |
+| `-ping` | `MONGOBETWEEN_PING` |
+| `-pretty` | `MONGOBETWEEN_PRETTY` |
+| `-dynamic` | `MONGOBETWEEN_DYNAMIC` |
+| `-enable-sdam-metrics` | `MONGOBETWEEN_ENABLE_SDAM_METRICS` |
+| `-enable-sdam-logging` | `MONGOBETWEEN_ENABLE_SDAM_LOGGING` |
+| `-allowed-operations` | `MONGOBETWEEN_ALLOWED_OPERATIONS` |
+| `-denied-operations` | `MONGOBETWEEN_DENIED_OPERATIONS` |
+| `-allowed-databases` | `MONGOBETWEEN_ALLOWED_DATABASES` |
+| `-denied-databases` | `MONGOBETWEEN_DENIED_DATABASES` |
+| `-allowed-collections` | `MONGOBETWEEN_ALLOWED_COLLECTIONS` |
+| `-allowed-collections-file` | `MONGOBETWEEN_ALLOWED_COLLECTIONS_FILE` |
+| `-denied-collections` | `MONGOBETWEEN_DENIED_COLLECTIONS` |
+| `-proxy-auth` | `MONGOBETWEEN_PROXY_AUTH` |
+| (positional args) | `MONGOBETWEEN_ADDRESSES` |
+
+Example:
+```bash
+export MONGOBETWEEN_USERNAME=admin
+export MONGOBETWEEN_PASSWORD=secret
+export MONGOBETWEEN_LOGLEVEL=debug
+export MONGOBETWEEN_ADDRESSES=":27016=mongodb://localhost:27017/database"
+mongobetween
+```
+
+For boolean flags, use `true`, `1`, `yes`, `on` to enable, or `false`, `0`, `no`, `off` to disable.
+
+#### Method 2: Inline ${VAR} syntax
+
+You can reference environment variables directly in flag values using `${VAR}` syntax:
+
+```bash
+export MONGO_USER=admin
+export MONGO_PASS=secret
+mongobetween -username '${MONGO_USER}' -password '${MONGO_PASS}' \
+  ":27016=mongodb://localhost:27017/database"
+```
+
+This also works in the connection URI:
+```bash
+mongobetween ":27016=mongodb://${MONGO_USER}:${MONGO_PASS}@localhost:27017/database"
+```
+
+**Note:** Command-line flags override environment variables when both are specified.
 
 ### Operation and Collection Filtering
 
@@ -136,6 +198,42 @@ mongobetween -allowed-collections "app_db.users,app_db.orders" \
 
 # Block access to sensitive collections
 mongobetween -denied-collections "app_db.credentials,app_db.secrets" \
+  ":27016=mongodb://localhost:27017/database"
+```
+
+#### Collection Filters from File
+
+For managing large lists of allowed collections, you can use a file:
+
+```bash
+# Create a collections file
+cat > allowed_collections.txt << EOF
+# Application collections
+app_db.users
+app_db.orders
+app_db.products
+
+# Analytics (wildcard)
+analytics_db.*
+EOF
+
+# Use the file
+mongobetween -allowed-collections-file allowed_collections.txt \
+  ":27016=mongodb://localhost:27017/database"
+```
+
+The file format:
+- One collection per line in `db.collection` format
+- Empty lines are ignored
+- Lines starting with `#` are treated as comments
+- Supports the same wildcard patterns as `-allowed-collections`
+
+You can combine both options - entries from `-allowed-collections` and `-allowed-collections-file` are merged:
+
+```bash
+mongobetween \
+  -allowed-collections "admin.system" \
+  -allowed-collections-file allowed_collections.txt \
   ":27016=mongodb://localhost:27017/database"
 ```
 

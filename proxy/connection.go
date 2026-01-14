@@ -14,6 +14,14 @@ import (
 	"github.com/coinbase/mongobetween/mongo"
 )
 
+// maxMessageSize is MongoDB's maximum wire protocol message size (48MB since MongoDB 4.4).
+// Messages larger than this are rejected to prevent memory exhaustion from malformed headers.
+const maxMessageSize = 48 * 1024 * 1024
+
+// minMessageSize is the minimum valid MongoDB wire protocol message size.
+// A message must have at least a 16-byte header.
+const minMessageSize = 16
+
 type connection struct {
 	log    *zap.Logger
 	statsd *statsd.Client
@@ -364,6 +372,12 @@ func (c *connection) readWireMessage() ([]byte, error) {
 
 	// read the length as an int32
 	size := (int32(sizeBuf[0])) | (int32(sizeBuf[1]) << 8) | (int32(sizeBuf[2]) << 16) | (int32(sizeBuf[3]) << 24)
+
+	// validate message size to prevent memory exhaustion from malformed headers
+	if size < minMessageSize || size > maxMessageSize {
+		return nil, fmt.Errorf("invalid message size: %d bytes (valid range: %d to %d)", size, minMessageSize, maxMessageSize)
+	}
+
 	if int(size) > cap(c.buffer) {
 		c.buffer = make([]byte, 0, size)
 	}

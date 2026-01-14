@@ -115,31 +115,35 @@ func validNetwork(network string) bool {
 func parseFlags() (*Config, error) {
 	flag.Usage = func() {
 		fmt.Printf("Usage: %s [OPTIONS] address1=uri1 [address2=uri2] ...\n", os.Args[0])
+		fmt.Printf("\nAll options can be set via environment variables with MONGOBETWEEN_ prefix.\n")
+		fmt.Printf("Addresses can also be set via MONGOBETWEEN_ADDRESSES env var (pipe or newline separated).\n\n")
 		flag.PrintDefaults()
 	}
 
 	var unlink, ping, pretty, enableSdamMetrics, enableSdamLogging bool
 	var network, username, password, stats, loglevel, dynamic string
 	var allowedOps, deniedOps, allowedDbs, deniedDbs, allowedColls, deniedColls string
+	var allowedCollsFile string
 	var proxyAuthUsers string
-	flag.StringVar(&network, "network", "tcp4", "One of: tcp, tcp4, tcp6, unix or unixpacket")
-	flag.StringVar(&username, "username", "", "MongoDB username")
-	flag.StringVar(&password, "password", "", "MongoDB password")
-	flag.StringVar(&stats, "statsd", defaultStatsdAddress, "Statsd address")
-	flag.BoolVar(&unlink, "unlink", false, "Unlink existing unix sockets before listening")
-	flag.BoolVar(&ping, "ping", false, "Ping downstream MongoDB before listening")
-	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
-	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
-	flag.StringVar(&dynamic, "dynamic", "", "File or URL to query for dynamic configuration")
-	flag.BoolVar(&enableSdamMetrics, "enable-sdam-metrics", false, "Enable SDAM(Server Discovery And Monitoring) metrics")
-	flag.BoolVar(&enableSdamLogging, "enable-sdam-logging", false, "Enable SDAM(Server Discovery And Monitoring) logging")
-	flag.StringVar(&allowedOps, "allowed-operations", "", "Comma-separated list of allowed MongoDB operations (e.g., find,insert,update)")
-	flag.StringVar(&deniedOps, "denied-operations", "", "Comma-separated list of denied MongoDB operations (e.g., drop,dropDatabase)")
-	flag.StringVar(&allowedDbs, "allowed-databases", "", "Comma-separated list of allowed databases (e.g., app_db,logs)")
-	flag.StringVar(&deniedDbs, "denied-databases", "", "Comma-separated list of denied databases (e.g., admin,config)")
-	flag.StringVar(&allowedColls, "allowed-collections", "", "Comma-separated list of allowed collections in db.collection format (e.g., app_db.users,app_db.orders)")
-	flag.StringVar(&deniedColls, "denied-collections", "", "Comma-separated list of denied collections in db.collection format (e.g., app_db.sensitive)")
-	flag.StringVar(&proxyAuthUsers, "proxy-auth", "", "Proxy authentication users in format user1:pass1,user2:pass2 (enables SCRAM-SHA-256 auth)")
+	flag.StringVar(&network, "network", getEnvString("network", "tcp4"), "One of: tcp, tcp4, tcp6, unix or unixpacket (env: MONGOBETWEEN_NETWORK)")
+	flag.StringVar(&username, "username", getEnvString("username", ""), "MongoDB username (env: MONGOBETWEEN_USERNAME)")
+	flag.StringVar(&password, "password", getEnvString("password", ""), "MongoDB password (env: MONGOBETWEEN_PASSWORD)")
+	flag.StringVar(&stats, "statsd", getEnvString("statsd", defaultStatsdAddress), "Statsd address (env: MONGOBETWEEN_STATSD)")
+	flag.BoolVar(&unlink, "unlink", getEnvBool("unlink", false), "Unlink existing unix sockets before listening (env: MONGOBETWEEN_UNLINK)")
+	flag.BoolVar(&ping, "ping", getEnvBool("ping", false), "Ping downstream MongoDB before listening (env: MONGOBETWEEN_PING)")
+	flag.BoolVar(&pretty, "pretty", getEnvBool("pretty", false), "Pretty print logging (env: MONGOBETWEEN_PRETTY)")
+	flag.StringVar(&loglevel, "loglevel", getEnvString("loglevel", "info"), "One of: debug, info, warn, error, dpanic, panic, fatal (env: MONGOBETWEEN_LOGLEVEL)")
+	flag.StringVar(&dynamic, "dynamic", getEnvString("dynamic", ""), "File or URL to query for dynamic configuration (env: MONGOBETWEEN_DYNAMIC)")
+	flag.BoolVar(&enableSdamMetrics, "enable-sdam-metrics", getEnvBool("enable-sdam-metrics", false), "Enable SDAM(Server Discovery And Monitoring) metrics (env: MONGOBETWEEN_ENABLE_SDAM_METRICS)")
+	flag.BoolVar(&enableSdamLogging, "enable-sdam-logging", getEnvBool("enable-sdam-logging", false), "Enable SDAM(Server Discovery And Monitoring) logging (env: MONGOBETWEEN_ENABLE_SDAM_LOGGING)")
+	flag.StringVar(&allowedOps, "allowed-operations", getEnvString("allowed-operations", ""), "Comma-separated list of allowed MongoDB operations (e.g., find,insert,update) (env: MONGOBETWEEN_ALLOWED_OPERATIONS)")
+	flag.StringVar(&deniedOps, "denied-operations", getEnvString("denied-operations", ""), "Comma-separated list of denied MongoDB operations (e.g., drop,dropDatabase) (env: MONGOBETWEEN_DENIED_OPERATIONS)")
+	flag.StringVar(&allowedDbs, "allowed-databases", getEnvString("allowed-databases", ""), "Comma-separated list of allowed databases (e.g., app_db,logs) (env: MONGOBETWEEN_ALLOWED_DATABASES)")
+	flag.StringVar(&deniedDbs, "denied-databases", getEnvString("denied-databases", ""), "Comma-separated list of denied databases (e.g., admin,config) (env: MONGOBETWEEN_DENIED_DATABASES)")
+	flag.StringVar(&allowedColls, "allowed-collections", getEnvString("allowed-collections", ""), "Comma-separated list of allowed collections in db.collection format (e.g., app_db.users,app_db.orders) (env: MONGOBETWEEN_ALLOWED_COLLECTIONS)")
+	flag.StringVar(&allowedCollsFile, "allowed-collections-file", getEnvString("allowed-collections-file", ""), "Path to file containing allowed collections, one per line in db.collection format (env: MONGOBETWEEN_ALLOWED_COLLECTIONS_FILE)")
+	flag.StringVar(&deniedColls, "denied-collections", getEnvString("denied-collections", ""), "Comma-separated list of denied collections in db.collection format (e.g., app_db.sensitive) (env: MONGOBETWEEN_DENIED_COLLECTIONS)")
+	flag.StringVar(&proxyAuthUsers, "proxy-auth", getEnvString("proxy-auth", ""), "Proxy authentication users in format user1:pass1,user2:pass2 (enables SCRAM-SHA-256 auth) (env: MONGOBETWEEN_PROXY_AUTH)")
 
 	flag.Parse()
 
@@ -154,6 +158,7 @@ func parseFlags() (*Config, error) {
 	allowedDbs = expandEnv(allowedDbs)
 	deniedDbs = expandEnv(deniedDbs)
 	allowedColls = expandEnv(allowedColls)
+	allowedCollsFile = expandEnv(allowedCollsFile)
 	deniedColls = expandEnv(deniedColls)
 	proxyAuthUsers = expandEnv(proxyAuthUsers)
 
@@ -170,25 +175,46 @@ func parseFlags() (*Config, error) {
 	}
 
 	addressMap := make(map[string]string)
-	for _, arg := range flag.Args() {
-		arg = expandEnv(arg)
-		all := strings.FieldsFunc(arg, func(r rune) bool {
+
+	// Helper function to parse address=uri pairs
+	parseAddresses := func(input string) error {
+		input = expandEnv(input)
+		all := strings.FieldsFunc(input, func(r rune) bool {
 			return r == '|' || r == '\n'
 		})
 		for _, v := range all {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				continue
+			}
 			split := strings.SplitN(v, "=", 2)
 			if len(split) != 2 {
-				return nil, errors.New("malformed address=uri option")
+				return errors.New("malformed address=uri option")
 			}
 			if _, ok := addressMap[split[0]]; ok {
-				return nil, fmt.Errorf("uri already defined for address: %s", split[0])
+				return fmt.Errorf("uri already defined for address: %s", split[0])
 			}
 			addressMap[split[0]] = split[1]
+		}
+		return nil
+	}
+
+	// Parse addresses from MONGOBETWEEN_ADDRESSES environment variable
+	if envAddresses := os.Getenv("MONGOBETWEEN_ADDRESSES"); envAddresses != "" {
+		if err := parseAddresses(envAddresses); err != nil {
+			return nil, err
+		}
+	}
+
+	// Parse addresses from command line arguments (these override env vars)
+	for _, arg := range flag.Args() {
+		if err := parseAddresses(arg); err != nil {
+			return nil, err
 		}
 	}
 
 	if len(addressMap) == 0 {
-		return nil, errors.New("missing address=uri(s)")
+		return nil, errors.New("missing address=uri(s) (set via command line or MONGOBETWEEN_ADDRESSES env var)")
 	}
 
 	loggerClient := newLogger(level, pretty)
@@ -211,12 +237,22 @@ func parseFlags() (*Config, error) {
 		})
 	}
 
+	// Parse allowed collections from file if specified
+	fileColls, err := parseFileLines(allowedCollsFile)
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge comma-separated and file-based allowed collections
+	allAllowedColls := parseCommaSeparated(allowedColls)
+	allAllowedColls = append(allAllowedColls, fileColls...)
+
 	filter := proxy.NewFilter(
 		parseCommaSeparated(allowedOps),
 		parseCommaSeparated(deniedOps),
 		parseCommaSeparated(allowedDbs),
 		parseCommaSeparated(deniedDbs),
-		parseCommaSeparated(allowedColls),
+		allAllowedColls,
 		parseCommaSeparated(deniedColls),
 	)
 
@@ -285,11 +321,62 @@ func parseCommaSeparated(s string) []string {
 	return result
 }
 
+func parseFileLines(filePath string) ([]string, error) {
+	if filePath == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", filePath, err)
+	}
+	lines := strings.Split(string(data), "\n")
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			result = append(result, line)
+		}
+	}
+	return result, nil
+}
+
 func expandEnv(config string) string {
 	// more restrictive version of os.ExpandEnv that only replaces exact matches of ${ENV}
 	return regexp.MustCompile(`\${(\w+)}`).ReplaceAllStringFunc(config, func(s string) string {
 		return os.ExpandEnv(s)
 	})
+}
+
+// envPrefix is the prefix for all mongobetween environment variables
+const envPrefix = "MONGOBETWEEN_"
+
+// flagNameToEnvName converts a flag name to its corresponding environment variable name
+// e.g., "allowed-collections" -> "MONGOBETWEEN_ALLOWED_COLLECTIONS"
+func flagNameToEnvName(flagName string) string {
+	return envPrefix + strings.ToUpper(strings.ReplaceAll(flagName, "-", "_"))
+}
+
+// getEnvString returns the environment variable value for a flag, or the default if not set
+func getEnvString(flagName, defaultVal string) string {
+	envName := flagNameToEnvName(flagName)
+	if val, ok := os.LookupEnv(envName); ok {
+		return val
+	}
+	return defaultVal
+}
+
+// getEnvBool returns the environment variable value as a bool for a flag, or the default if not set
+func getEnvBool(flagName string, defaultVal bool) bool {
+	envName := flagNameToEnvName(flagName)
+	if val, ok := os.LookupEnv(envName); ok {
+		switch strings.ToLower(val) {
+		case "true", "1", "yes", "on":
+			return true
+		case "false", "0", "no", "off":
+			return false
+		}
+	}
+	return defaultVal
 }
 
 func clientOptions(uri, username, password string) (string, *options.ClientOptions, error) {
