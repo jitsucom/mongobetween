@@ -157,7 +157,8 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 	requestCursorID, _ := msg.Op.CursorID()
 	requestCommand, collection := msg.Op.CommandAndCollection()
 	transactionDetails := msg.Op.TransactionDetails()
-	server, err := m.selectServerWithTopology(tplg, roundTripCtx, requestCursorID, collection, transactionDetails)
+	readPref, _ := msg.Op.ReadPref()
+	server, err := m.selectServerWithTopology(tplg, roundTripCtx, requestCursorID, collection, transactionDetails, readPref)
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +234,7 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 	}, nil
 }
 
-func (m *Mongo) selectServerWithTopology(topology *topology.Topology, ctx context.Context, requestCursorID int64, collection string, transDetails *TransactionDetails) (server driver.Server, err error) {
+func (m *Mongo) selectServerWithTopology(topology *topology.Topology, ctx context.Context, requestCursorID int64, collection string, transDetails *TransactionDetails, rp *readpref.ReadPref) (server driver.Server, err error) {
 	done := m.metrics.TimingScope("server_selection", func(err error) []string {
 		return []string{successTag(err == nil)}
 	})
@@ -256,9 +257,13 @@ func (m *Mongo) selectServerWithTopology(topology *topology.Topology, ctx contex
 		}
 	}
 
-	// Select a server
+	// Select a server using the provided read preference
+	// If no read preference was provided, default to primary
+	if rp == nil {
+		rp = readpref.Primary()
+	}
 	selector := description.CompositeSelector([]description.ServerSelector{
-		description.ReadPrefSelector(readpref.Primary()),   // ignored by sharded clusters
+		description.ReadPrefSelector(rp),                   // use client's read preference (ignored by sharded clusters)
 		description.LatencySelector(15 * time.Millisecond), // default localThreshold for the client
 	})
 	return topology.SelectServer(ctx, selector)
