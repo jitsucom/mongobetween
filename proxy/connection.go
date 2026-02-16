@@ -5,7 +5,6 @@ import (
 	"io"
 	"net"
 	"runtime/debug"
-	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
@@ -80,12 +79,8 @@ func (c *connection) processMessages() {
 }
 
 func (c *connection) handleMessage() (err error) {
-	var tags []string
-
-	defer func(start time.Time) {
-		tags := append(tags, fmt.Sprintf("success:%v", err == nil))
-		_ = c.statsd.Timing("handle_message", time.Since(start), tags, 1)
-	}(time.Now())
+	metrics := NewRequestMetrics(c.statsd)
+	defer func() { metrics.Finish(err) }()
 
 	var wm []byte
 	if wm, err = c.readWireMessage(); err != nil {
@@ -99,14 +94,7 @@ func (c *connection) handleMessage() (err error) {
 	isMaster := op.IsIsMaster()
 	command, collection := op.CommandAndCollection()
 	unacknowledged := op.Unacknowledged()
-	tags = append(
-		tags,
-		fmt.Sprintf("request_op_code:%v", op.OpCode()),
-		fmt.Sprintf("is_master:%v", isMaster),
-		fmt.Sprintf("command:%s", string(command)),
-		fmt.Sprintf("collection:%s", collection),
-		fmt.Sprintf("unacknowledged:%v", unacknowledged),
-	)
+	metrics.AddRequestTags(int32(op.OpCode()), isMaster, string(command), collection, unacknowledged)
 	c.log.Debug(
 		"Request",
 		zap.Int32("op_code", int32(op.OpCode())),
@@ -166,7 +154,7 @@ func (c *connection) handleMessage() (err error) {
 		Op: op,
 	}
 	var res *mongo.Message
-	if res, err = c.roundTrip(req, isMaster, command, tags); err != nil {
+	if res, err = c.roundTrip(req, isMaster, command, metrics.Tags()); err != nil {
 		return
 	}
 
@@ -175,10 +163,7 @@ func (c *connection) handleMessage() (err error) {
 		return
 	}
 
-	tags = append(
-		tags,
-		fmt.Sprintf("response_op_code:%v", res.Op.OpCode()),
-	)
+	metrics.AddResponseTag(int32(res.Op.OpCode()))
 
 	if _, err = c.conn.Write(res.Wm); err != nil {
 		return

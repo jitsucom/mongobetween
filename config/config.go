@@ -22,7 +22,6 @@ import (
 )
 
 const usernamePlaceholder = "_"
-const defaultStatsdAddress = "localhost:8125"
 
 var validNetworks = []string{"tcp", "tcp4", "tcp6", "unix", "unixpacket"}
 
@@ -128,7 +127,7 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&network, "network", getEnvString("network", "tcp4"), "One of: tcp, tcp4, tcp6, unix or unixpacket (env: MONGOBETWEEN_NETWORK)")
 	flag.StringVar(&username, "username", getEnvString("username", ""), "MongoDB username (env: MONGOBETWEEN_USERNAME)")
 	flag.StringVar(&password, "password", getEnvString("password", ""), "MongoDB password (env: MONGOBETWEEN_PASSWORD)")
-	flag.StringVar(&stats, "statsd", getEnvString("statsd", defaultStatsdAddress), "Statsd address (env: MONGOBETWEEN_STATSD)")
+	flag.StringVar(&stats, "statsd", getEnvString("statsd", ""), "Statsd address, empty to disable (env: MONGOBETWEEN_STATSD)")
 	flag.BoolVar(&unlink, "unlink", getEnvBool("unlink", false), "Unlink existing unix sockets before listening (env: MONGOBETWEEN_UNLINK)")
 	flag.BoolVar(&ping, "ping", getEnvBool("ping", false), "Ping downstream MongoDB before listening (env: MONGOBETWEEN_PING)")
 	flag.BoolVar(&pretty, "pretty", getEnvBool("pretty", false), "Pretty print logging (env: MONGOBETWEEN_PRETTY)")
@@ -443,6 +442,9 @@ func uriWorkaround(uri, username string) string {
 }
 
 func newStatsdClient(statsAddress string) (*statsd.Client, error) {
+	if statsAddress == "" {
+		return nil, nil
+	}
 	return statsd.New(statsAddress, statsd.WithNamespace("mongobetween"))
 }
 
@@ -468,6 +470,9 @@ func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
 }
 
 func poolMonitor(sd *statsd.Client) *event.PoolMonitor {
+	if sd == nil {
+		return nil
+	}
 	checkedOut, checkedIn := util.StatsdBackgroundGauge(sd, "pool.checked_out_connections", []string{})
 	opened, closed := util.StatsdBackgroundGauge(sd, "pool.open_connections", []string{})
 
@@ -496,6 +501,10 @@ func poolMonitor(sd *statsd.Client) *event.PoolMonitor {
 }
 
 func serverMonitoring(log *zap.Logger, statsdClient *statsd.Client, enableSdamMetrics bool, enableSdamLogging bool) *event.ServerMonitor {
+	// Disable SDAM metrics if statsd client is nil
+	if statsdClient == nil {
+		enableSdamMetrics = false
+	}
 
 	return &event.ServerMonitor{
 		ServerOpening: func(e *event.ServerOpeningEvent) {

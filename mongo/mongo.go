@@ -25,9 +25,9 @@ const pingTimeout = 60 * time.Second
 const disconnectTimeout = 10 * time.Second
 
 type Mongo struct {
-	log    *zap.Logger
-	statsd *statsd.Client
-	opts   *options.ClientOptions
+	log     *zap.Logger
+	metrics *metricsHelper
+	opts    *options.ClientOptions
 
 	mu           sync.RWMutex
 	client       *mongo.Client
@@ -73,7 +73,7 @@ func Connect(log *zap.Logger, sd *statsd.Client, opts *options.ClientOptions, pi
 	rtCtx, rtCancel := context.WithCancel(context.Background())
 	m := Mongo{
 		log:             log,
-		statsd:          sd,
+		metrics:         newMetricsHelper(sd),
 		opts:            opts,
 		client:          c,
 		topology:        t,
@@ -92,7 +92,7 @@ func (m *Mongo) Description() description.Topology {
 }
 
 func (m *Mongo) cacheGauge(name string, count float64) {
-	_ = m.statsd.Gauge(name, count, []string{}, 1)
+	m.metrics.Gauge(name, count, nil)
 }
 
 func (m *Mongo) cacheMonitor() {
@@ -125,8 +125,15 @@ func (m *Mongo) Close() {
 }
 
 func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
+	// Take lock briefly to check state and get references
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	if m.client == nil {
+		m.mu.RUnlock()
+		return nil, errors.New("connection closed")
+	}
+	tplg := m.topology
+	roundTripCtx := m.roundTripCtx
+	m.mu.RUnlock()
 
 	var addr address.Address
 	defer func() {
@@ -145,21 +152,17 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 		}
 	}()
 
-	if m.client == nil {
-		return nil, errors.New("connection closed")
-	}
-
 	// CursorID is pinned to a server by CursorID-collection name key
 	// Transaction is pinned to a server by the issued lsid
 	requestCursorID, _ := msg.Op.CursorID()
 	requestCommand, collection := msg.Op.CommandAndCollection()
 	transactionDetails := msg.Op.TransactionDetails()
-	server, err := m.selectServer(requestCursorID, collection, transactionDetails)
+	server, err := m.selectServerWithTopology(tplg, roundTripCtx, requestCursorID, collection, transactionDetails)
 	if err != nil {
 		return nil, err
 	}
 
-	conn, err := m.checkoutConnection(server)
+	conn, err := m.checkoutConnection(roundTripCtx, server)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +170,7 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 	addr = conn.Address()
 	tags = append(
 		tags,
-		fmt.Sprintf("address:%s", conn.Address().String()),
+		addressTag(conn.Address().String()),
 	)
 
 	defer func() {
@@ -184,7 +187,7 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 	}
 
 	unacknowledged := msg.Op.Unacknowledged()
-	wm, err := m.roundTrip(conn, msg.Wm, unacknowledged, tags)
+	wm, err := m.roundTrip(roundTripCtx, conn, msg.Wm, unacknowledged, tags)
 	if err != nil {
 		m.processError(err, ep, addr, conn)
 		return nil, err
@@ -230,10 +233,11 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 	}, nil
 }
 
-func (m *Mongo) selectServer(requestCursorID int64, collection string, transDetails *TransactionDetails) (server driver.Server, err error) {
-	defer func(start time.Time) {
-		_ = m.statsd.Timing("server_selection", time.Since(start), []string{fmt.Sprintf("success:%v", err == nil)}, 1)
-	}(time.Now())
+func (m *Mongo) selectServerWithTopology(topology *topology.Topology, ctx context.Context, requestCursorID int64, collection string, transDetails *TransactionDetails) (server driver.Server, err error) {
+	done := m.metrics.TimingScope("server_selection", func(err error) []string {
+		return []string{successTag(err == nil)}
+	})
+	defer func() { done(err) }()
 
 	// Check for a pinned server based on current transaction lsid first
 	if transDetails != nil {
@@ -257,22 +261,20 @@ func (m *Mongo) selectServer(requestCursorID int64, collection string, transDeta
 		description.ReadPrefSelector(readpref.Primary()),   // ignored by sharded clusters
 		description.LatencySelector(15 * time.Millisecond), // default localThreshold for the client
 	})
-	return m.topology.SelectServer(m.roundTripCtx, selector)
+	return topology.SelectServer(ctx, selector)
 }
 
-func (m *Mongo) checkoutConnection(server driver.Server) (conn driver.Connection, err error) {
-	defer func(start time.Time) {
+func (m *Mongo) checkoutConnection(ctx context.Context, server driver.Server) (conn driver.Connection, err error) {
+	done := m.metrics.TimingScope("checkout_connection", func(err error) []string {
 		addr := ""
 		if conn != nil {
 			addr = conn.Address().String()
 		}
-		_ = m.statsd.Timing("checkout_connection", time.Since(start), []string{
-			fmt.Sprintf("address:%s", addr),
-			fmt.Sprintf("success:%v", err == nil),
-		}, 1)
-	}(time.Now())
+		return []string{addressTag(addr), successTag(err == nil)}
+	})
+	defer func() { done(err) }()
 
-	conn, err = server.Connection(m.roundTripCtx)
+	conn, err = server.Connection(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -281,20 +283,20 @@ func (m *Mongo) checkoutConnection(server driver.Server) (conn driver.Connection
 }
 
 // see https://github.com/mongodb/mongo-go-driver/blob/v1.7.2/x/mongo/driver/operation.go#L664-L681
-func (m *Mongo) roundTrip(conn driver.Connection, req []byte, unacknowledged bool, tags []string) (res []byte, err error) {
-	defer func(start time.Time) {
-		tags = append(tags, fmt.Sprintf("success:%v", err == nil))
+func (m *Mongo) roundTrip(ctx context.Context, conn driver.Connection, req []byte, unacknowledged bool, tags []string) (res []byte, err error) {
+	if m.metrics.enabled {
+		start := time.Now()
+		defer func() {
+			tags = append(tags, successTag(err == nil))
+			m.metrics.Distribution("request_size", float64(len(req)), tags)
+			if err == nil && !unacknowledged {
+				m.metrics.Distribution("response_size", float64(len(res)), tags)
+			}
+			m.metrics.Timing("round_trip", time.Since(start), tags)
+		}()
+	}
 
-		_ = m.statsd.Distribution("request_size", float64(len(req)), tags, 1)
-		if err == nil && !unacknowledged {
-			// There is no response size for unacknowledged writes.
-			_ = m.statsd.Distribution("response_size", float64(len(res)), tags, 1)
-		}
-
-		_ = m.statsd.Timing("round_trip", time.Since(start), tags, 1)
-	}(time.Now())
-
-	if err = conn.WriteWireMessage(m.roundTripCtx, req); err != nil {
+	if err = conn.WriteWireMessage(ctx, req); err != nil {
 		return nil, wrapNetworkError(err)
 	}
 
@@ -302,7 +304,7 @@ func (m *Mongo) roundTrip(conn driver.Connection, req []byte, unacknowledged boo
 		return nil, nil
 	}
 
-	if res, err = conn.ReadWireMessage(m.roundTripCtx); err != nil {
+	if res, err = conn.ReadWireMessage(ctx); err != nil {
 		return nil, wrapNetworkError(err)
 	}
 
