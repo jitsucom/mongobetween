@@ -8,12 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo/description"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
-	"go.mongodb.org/mongo-driver/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/description"
 	"go.uber.org/zap"
 
 	"github.com/coinbase/mongobetween/mongo"
@@ -28,7 +27,7 @@ func insertOpMsg(t *testing.T) *mongo.Message {
 	assert.Nil(t, err)
 
 	doc1, err := bson.Marshal(bson.D{
-		{Key: "_id", Value: primitive.NewObjectID()},
+		{Key: "_id", Value: bson.NewObjectID()},
 		{Key: "name", Value: "Misty"},
 		{Key: "age", Value: 10},
 		{Key: "city", Value: "Cerulean City"},
@@ -36,7 +35,7 @@ func insertOpMsg(t *testing.T) *mongo.Message {
 	assert.Nil(t, err)
 
 	doc2, err := bson.Marshal(bson.D{
-		{Key: "_id", Value: primitive.NewObjectID()},
+		{Key: "_id", Value: bson.NewObjectID()},
 		{Key: "name", Value: "Brock"},
 		{Key: "age", Value: 15},
 		{Key: "city", Value: "Pewter City"},

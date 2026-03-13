@@ -3,7 +3,7 @@ package mongo
 import (
 	b64 "encoding/base64"
 	"github.com/coinbase/mongobetween/lruttl"
-	"go.mongodb.org/mongo-driver/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver"
 	"time"
 )
 

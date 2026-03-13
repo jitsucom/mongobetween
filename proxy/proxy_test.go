@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/modules/mongodb"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/writeconcern"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/writeconcern"
 	"go.uber.org/zap"
 
 	mongob "github.com/coinbase/mongobetween/mongo"
@@ -169,16 +169,15 @@ func TestProxyUnacknowledgedWrites(t *testing.T) {
 	// unacknowledged write concern for testing.
 	wc := writeconcern.Unacknowledged()
 	setupCollection := client.Database("test").Collection("test_proxy_unacknowledged_writes")
-	unackCollection, err := setupCollection.Clone(options.Collection().SetWriteConcern(wc))
-	assert.Nil(t, err)
+	unackCollection := setupCollection.Clone(options.Collection().SetWriteConcern(wc))
 
 	// Setup by deleting all documents.
-	_, err = setupCollection.DeleteMany(ctx, bson.D{})
+	_, err := setupCollection.DeleteMany(ctx, bson.D{})
 	assert.Nil(t, err)
 
 	ash := Trainer{"Ash", 10, "Pallet Town"}
 	_, err = unackCollection.InsertOne(ctx, ash)
-	assert.Equal(t, mongo.ErrUnacknowledgedWrite, err) // driver returns a special error value for w=0 writes
+	assert.Nil(t, err)
 
 	// Insert a document using the setup collection and ensure document count is 2. Doing this ensures that the proxy
 	// did not crash while processing the unacknowledged write.
@@ -252,7 +251,7 @@ func TestProxyWithDynamicConfig(t *testing.T) {
 	// Connect directly to the upstream containers
 	var upstreamClients []*mongo.Client
 	for _, c := range containers {
-		client, err := mongo.Connect(ctx, options.Client().ApplyURI(c.uri))
+		client, err := mongo.Connect(options.Client().ApplyURI(c.uri))
 		assert.Nil(t, err)
 		upstreamClients = append(upstreamClients, client)
 	}
@@ -368,7 +367,7 @@ func setupClient(t *testing.T, host string, port int, clientOpts ...*options.Cli
 	uriOpts := options.Client().ApplyURI(proxyURI)
 	allClientOpts := append([]*options.ClientOptions{uriOpts}, clientOpts...)
 
-	client, err := mongo.Connect(ctx, allClientOpts...)
+	client, err := mongo.Connect(allClientOpts...)
 	assert.Nil(t, err)
 
 	// Call Ping with a low timeout to ensure the cluster is running and fail-fast if not.
@@ -393,7 +392,7 @@ func setupClientWithAuth(t *testing.T, host string, port int, username, password
 	proxyURI := fmt.Sprintf("mongodb://%s:%s@%s:%d/test?authMechanism=SCRAM-SHA-256", username, password, host, port)
 	clientOpts := options.Client().ApplyURI(proxyURI)
 
-	client, err := mongo.Connect(ctx, clientOpts)
+	client, err := mongo.Connect(clientOpts)
 	require.NoError(t, err)
 
 	return client
@@ -838,7 +837,7 @@ func TestProxyWithAuthFailureWrongPassword(t *testing.T) {
 	// Try to connect with wrong password
 	proxyURI := fmt.Sprintf("mongodb://testuser:wrongpass@localhost:%d/test", proxyPort)
 	clientOpts := options.Client().ApplyURI(proxyURI)
-	client, err := mongo.Connect(ctx, clientOpts)
+	client, err := mongo.Connect(clientOpts)
 	require.NoError(t, err)
 	defer func() {
 		_ = client.Disconnect(ctx)
@@ -874,7 +873,7 @@ func TestProxyWithAuthFailureUnknownUser(t *testing.T) {
 	// Try to connect with unknown user
 	proxyURI := fmt.Sprintf("mongodb://unknownuser:testpass@localhost:%d/test", proxyPort)
 	clientOpts := options.Client().ApplyURI(proxyURI)
-	client, err := mongo.Connect(ctx, clientOpts)
+	client, err := mongo.Connect(clientOpts)
 	require.NoError(t, err)
 	defer func() {
 		_ = client.Disconnect(ctx)

@@ -2,7 +2,8 @@ package mongo
 
 import (
 	"github.com/stretchr/testify/assert"
-	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/v2/x/bsonx/bsoncore"
+
 	"testing"
 )
 

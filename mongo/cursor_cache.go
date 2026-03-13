@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"go.mongodb.org/mongo-driver/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver"
 
 	"github.com/coinbase/mongobetween/lruttl"
 )

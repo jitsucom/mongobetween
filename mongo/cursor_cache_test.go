@@ -6,14 +6,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"go.mongodb.org/mongo-driver/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/mnet"
 )
 
 type mockServer struct {
 	i int
 }
 
-func (m *mockServer) Connection(context.Context) (driver.Connection, error) {
+func (m *mockServer) Connection(context.Context) (*mnet.Connection, error) {
 	return nil, nil
 }
 

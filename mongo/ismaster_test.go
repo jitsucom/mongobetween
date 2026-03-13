@@ -2,14 +2,14 @@ package mongo
 
 import (
 	"github.com/stretchr/testify/assert"
-	"go.mongodb.org/mongo-driver/mongo/description"
-	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
-	"go.mongodb.org/mongo-driver/x/mongo/driver/wiremessage"
+	"go.mongodb.org/mongo-driver/v2/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/description"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/wiremessage"
 	"testing"
 )
 
 func TestIsMasterSingle(t *testing.T) {
-	im, err := IsMasterResponse(10, description.Single)
+	im, err := IsMasterResponse(10, description.TopologyKindSingle)
 	assert.Nil(t, err)
 
 	op, err := Decode(im.Wm)
@@ -30,7 +30,7 @@ func TestIsMasterSingle(t *testing.T) {
 }
 
 func TestIsMasterSharded(t *testing.T) {
-	im, err := IsMasterResponse(10, description.Sharded)
+	im, err := IsMasterResponse(10, description.TopologyKindSharded)
 	assert.Nil(t, err)
 
 	op, err := Decode(im.Wm)

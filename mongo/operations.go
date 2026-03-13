@@ -2,15 +2,14 @@ package mongo
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"strings"
 
-	"go.mongodb.org/mongo-driver/mongo/readpref"
-	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
-	"go.mongodb.org/mongo-driver/x/mongo/driver"
-	"go.mongodb.org/mongo-driver/x/mongo/driver/wiremessage"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/wiremessage"
 )
 
 type Message struct {
@@ -457,7 +456,7 @@ func (m *opMsg) Error() error {
 	if !ok {
 		return nil
 	}
-	return driver.ExtractErrorFromServerResponse(context.Background(), single.msg)
+	return driver.ExtractErrorFromServerResponse(single.msg)
 }
 
 func (m *opMsg) Unacknowledged() bool {
@@ -624,7 +623,7 @@ func (r *opReply) Error() error {
 	if len(r.documents) == 0 {
 		return nil
 	}
-	return driver.ExtractErrorFromServerResponse(context.Background(), r.documents[0])
+	return driver.ExtractErrorFromServerResponse(r.documents[0])
 }
 
 func (r *opReply) Unacknowledged() bool {

@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
-	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/x/bsonx/bsoncore"
 )
 
 func TestExtractReadPref_Primary(t *testing.T) {
@@ -130,7 +130,7 @@ func TestOpMsg_ReadPref_Primary(t *testing.T) {
 	assert.NoError(t, err)
 
 	op := NewOpMsg(doc, []bsoncore.Document{})
-	
+
 	rp, ok := op.Op.ReadPref()
 	assert.True(t, ok)
 	assert.Equal(t, readpref.PrimaryMode, rp.Mode())
@@ -145,7 +145,7 @@ func TestOpMsg_ReadPref_Secondary(t *testing.T) {
 	assert.NoError(t, err)
 
 	op := NewOpMsg(doc, []bsoncore.Document{})
-	
+
 	rp, ok := op.Op.ReadPref()
 	assert.True(t, ok)
 	assert.Equal(t, readpref.SecondaryMode, rp.Mode())
@@ -159,7 +159,7 @@ func TestOpMsg_ReadPref_NoPreference(t *testing.T) {
 	assert.NoError(t, err)
 
 	op := NewOpMsg(doc, []bsoncore.Document{})
-	
+
 	rp, ok := op.Op.ReadPref()
 	assert.False(t, ok)
 	assert.Equal(t, readpref.PrimaryMode, rp.Mode())
@@ -211,12 +211,12 @@ func TestGetMoreOperation_CursorPinning(t *testing.T) {
 		cursorID:           12345,
 		fullCollectionName: "test.collection",
 	}
-	
+
 	// GetMore should not have a read preference since it uses cursor pinning
 	rp, ok := getMoreOp.ReadPref()
 	assert.False(t, ok, "GetMore should not specify read preference")
 	assert.Equal(t, readpref.PrimaryMode, rp.Mode())
-	
+
 	// Verify cursor ID is accessible
 	cursorID, cursorOK := getMoreOp.CursorID()
 	assert.True(t, cursorOK)

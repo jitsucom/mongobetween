@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/DataDog/datadog-go/statsd"
-	"go.mongodb.org/mongo-driver/event"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/x/mongo/driver/connstring"
+	"go.mongodb.org/mongo-driver/v2/event"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/connstring"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -489,9 +489,9 @@ func poolMonitor(sd *statsd.Client) *event.PoolMonitor {
 				opened(name, tags)
 			case event.ConnectionClosed:
 				closed(name, tags)
-			case event.GetSucceeded:
+			case event.ConnectionCheckedOut:
 				checkedOut(name, tags)
-			case event.ConnectionReturned:
+			case event.ConnectionCheckedIn:
 				checkedIn(name, tags)
 			default:
 				_ = sd.Incr(name, tags, 1)

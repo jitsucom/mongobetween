@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
-	"go.mongodb.org/mongo-driver/mongo/description"
-	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/description"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/topology"
 	"go.uber.org/zap"
 )
 

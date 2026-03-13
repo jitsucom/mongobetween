@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"go.mongodb.org/mongo-driver/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/mnet"
 )
 
 type transactionMockServer struct {
@@ -21,7 +22,7 @@ func (m *transactionMockServer) RTT90() time.Duration {
 	return time.Duration(0)
 }
 
-func (m *transactionMockServer) Connection(context.Context) (driver.Connection, error) {
+func (m *transactionMockServer) Connection(context.Context) (*mnet.Connection, error) {
 	return nil, nil
 }
 

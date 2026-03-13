@@ -5,19 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"reflect"
+	"strconv"
 	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/DataDog/datadog-go/statsd"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/address"
-	"go.mongodb.org/mongo-driver/mongo/description"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
-	"go.mongodb.org/mongo-driver/x/mongo/driver"
-	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/address"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/description"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/mnet"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/topology"
 	"go.uber.org/zap"
 )
 
@@ -50,10 +53,22 @@ func Connect(log *zap.Logger, sd *statsd.Client, opts *options.ClientOptions, pi
 	// timeout shouldn't be hit if ping == false, as Connect doesn't block the current goroutine
 	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
-
+	maxPoolSize := 20
+	if envMaxPoolSize := os.Getenv("MONGOBETWEEN_MAX_POOL_SIZE"); envMaxPoolSize != "" {
+		var err error
+		maxPoolSize, err = strconv.Atoi(envMaxPoolSize)
+		if err != nil {
+			log.Warn("Invalid MONGOBETWEEN_MAX_POOL_SIZE environment variable, using default value", zap.String("value", envMaxPoolSize), zap.Error(err))
+			maxPoolSize = 20
+		}
+	}
+	opts.SetMaxConnecting(max(uint64(maxPoolSize/4), 2))
+	opts.SetMaxConnIdleTime(30 * time.Minute)
+	opts.SetMinPoolSize(max(uint64(maxPoolSize/2), 1))
+	opts.SetMaxPoolSize(uint64(maxPoolSize))
 	var err error
 	log.Info("Connect")
-	c, err := mongo.Connect(ctx, opts)
+	c, err := mongo.Connect(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -262,14 +277,14 @@ func (m *Mongo) selectServerWithTopology(topology *topology.Topology, ctx contex
 	if rp == nil {
 		rp = readpref.Primary()
 	}
-	selector := description.CompositeSelector([]description.ServerSelector{
-		description.ReadPrefSelector(rp),                   // use client's read preference (ignored by sharded clusters)
-		description.LatencySelector(15 * time.Millisecond), // default localThreshold for the client
-	})
+	selector := &Composite{Selectors: []description.ServerSelector{
+		&ReadPref{rp, false}, // use client's read preference (ignored by sharded clusters)
+		&Latency{15 * time.Millisecond},
+	}}
 	return topology.SelectServer(ctx, selector)
 }
 
-func (m *Mongo) checkoutConnection(ctx context.Context, server driver.Server) (conn driver.Connection, err error) {
+func (m *Mongo) checkoutConnection(ctx context.Context, server driver.Server) (conn *mnet.Connection, err error) {
 	done := m.metrics.TimingScope("checkout_connection", func(err error) []string {
 		addr := ""
 		if conn != nil {
@@ -288,7 +303,7 @@ func (m *Mongo) checkoutConnection(ctx context.Context, server driver.Server) (c
 }
 
 // see https://github.com/mongodb/mongo-go-driver/blob/v1.7.2/x/mongo/driver/operation.go#L664-L681
-func (m *Mongo) roundTrip(ctx context.Context, conn driver.Connection, req []byte, unacknowledged bool, tags []string) (res []byte, err error) {
+func (m *Mongo) roundTrip(ctx context.Context, conn *mnet.Connection, req []byte, unacknowledged bool, tags []string) (res []byte, err error) {
 	if m.metrics.enabled {
 		start := time.Now()
 		defer func() {
@@ -301,7 +316,7 @@ func (m *Mongo) roundTrip(ctx context.Context, conn driver.Connection, req []byt
 		}()
 	}
 
-	if err = conn.WriteWireMessage(ctx, req); err != nil {
+	if err = conn.Write(ctx, req); err != nil {
 		return nil, wrapNetworkError(err)
 	}
 
@@ -309,7 +324,7 @@ func (m *Mongo) roundTrip(ctx context.Context, conn driver.Connection, req []byt
 		return nil, nil
 	}
 
-	if res, err = conn.ReadWireMessage(ctx); err != nil {
+	if res, err = conn.Read(ctx); err != nil {
 		return nil, wrapNetworkError(err)
 	}
 
@@ -322,10 +337,7 @@ func wrapNetworkError(err error) error {
 }
 
 // Process the error with the given ErrorProcessor, returning true if processing causes the topology to change
-func (m *Mongo) processError(err error, ep driver.ErrorProcessor, addr address.Address, conn driver.Connection) {
-	last := m.Description()
-
-	// gather fields for logging
+func (m *Mongo) processError(err error, ep driver.ErrorProcessor, addr address.Address, conn *mnet.Connection) { // gather fields for logging
 	fields := []zap.Field{
 		zap.String("address", addr.String()),
 		zap.Error(err),
@@ -344,9 +356,7 @@ func (m *Mongo) processError(err error, ep driver.ErrorProcessor, addr address.A
 
 	// log if the error changed the topology
 	if errorChangesTopology(err) {
-		desc := m.Description()
-
-		fields = append(fields, topologyChangedFields(&last, &desc)...)
+		fields = append(fields, topologyChangedFields(new(m.Description()), new(m.Description()))...)
 		m.log.Error("Topology changing error", fields...)
 	}
 }

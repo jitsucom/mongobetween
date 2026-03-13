@@ -3,10 +3,10 @@ package mongo
 import (
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/description"
-	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
-	"go.mongodb.org/mongo-driver/x/mongo/driver/wiremessage"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/description"
+	"go.mongodb.org/mongo-driver/v2/x/mongo/driver/wiremessage"
 )
 
 // https://github.com/mongodb/mongo/blob/ca57a4d640aee04ef373a50b24e79d85f0bb91a0/src/mongo/client/constants.h#L50
@@ -34,7 +34,7 @@ func isMasterDocument(kind description.TopologyKind) (bsoncore.Document, error) 
 	ns := time.Now().UnixNano()
 	ms := ns / 1e6
 	var doc bson.D
-	if kind == description.Single {
+	if kind == description.TopologyKindSingle {
 		doc = bson.D{
 			{Key: "ismaster", Value: true},
 			{Key: "maxBsonObjectSize", Value: 16777216},                  // $numberInt
