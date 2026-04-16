@@ -22,3 +22,5 @@ jobs:
       review_instructions: >-
         Focus on Go correctness, concurrency bugs, and MongoDB protocol handling.
         Skip style nitpicks.
+      pr_number: ${{ inputs.pr_number }}
+      commit_sha: ${{ inputs.commit_sha }}
