@@ -1,0 +1,26 @@
+name: AI Review
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number to review (leave blank to review a commit)
+        required: false
+      commit_sha:
+        description: Commit SHA to review (leave blank when using PR number)
+        required: false
+
+jobs:
+  ai-review:
+    uses: jitsucom/github-workflows/.github/workflows/ai-review.yml@1.4.20260416
+    secrets: inherit
+    with:
+      review_instructions: >-
+        Focus on Go correctness, concurrency bugs, and MongoDB protocol handling.
+        Skip style nitpicks.
+      pr_number: ${{ inputs.pr_number }}
+      commit_sha: ${{ inputs.commit_sha }}
